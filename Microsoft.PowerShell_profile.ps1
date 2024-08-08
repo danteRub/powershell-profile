@@ -290,9 +290,9 @@ function k9 { Stop-Process -Name $args[0] }
 
 # Enhanced Listing with icons
 
-function ls { Get-ChildItem -Path . -Force | Format-Table -AutoSize }
-function la { Get-ChildItem -Path . -Force | Format-Table -AutoSize }
-function ll { Get-ChildItem -Path . -Force -Hidden | Format-Table -AutoSize }
+function ls { eza -l --icons }
+function la { eza -la --icons }
+function ll { eza -la --hidden --icons }
 
 
 # Git Shortcuts
