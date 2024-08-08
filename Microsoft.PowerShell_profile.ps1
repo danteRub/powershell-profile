@@ -16,8 +16,60 @@
 ############                                                                                                         ############
 #################################################################################################################################
 
+#opt-out of telemetry before doing anything, only if PowerShell is run as admin
+if ([bool]([System.Security.Principal.WindowsIdentity]::GetCurrent()).IsSystem) {
+    [System.Environment]::SetEnvironmentVariable('POWERSHELL_TELEMETRY_OPTOUT', 'true', [System.EnvironmentVariableTarget]::Machine)
+}
+
 # Initial GitHub.com connectivity check with 1 second timeout
 $canConnectToGitHub = Test-Connection github.com -Count 1 -Quiet -TimeoutSeconds 1
+
+# Instalación y configuración de módulos adicionales
+
+function Install-ModuleIfMissing {
+    param (
+        [string]$moduleName
+    )
+    if (-not (Get-Module -ListAvailable -Name $moduleName)) {
+        try {
+            if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+                Write-Host "winget no está instalado. Instalando módulo $moduleName usando Install-Module..." -ForegroundColor Yellow
+                Install-Module -Name $moduleName -Force -Scope CurrentUser -ErrorAction Stop
+            } else {
+                Write-Host "Instalando módulo $moduleName usando winget..." -ForegroundColor Yellow
+                winget install -e --id $moduleName --accept-source-agreements --accept-package-agreements -ErrorAction Stop
+            }
+        } catch {
+            Write-Error "Falló la instalación del módulo $moduleName. Error: $_"
+        }
+    } else {
+        Write-Host "Módulo $moduleName ya está instalado." -ForegroundColor Green
+    }
+}
+
+# Instalar y configurar PSReadLine para mejorar la experiencia en la línea de comandos
+Install-ModuleIfMissing -moduleName "PSReadLine"
+
+if (Get-Module -ListAvailable -Name "PSReadLine") {
+    Import-Module PSReadLine
+    Set-PSReadLineOption -EditMode Windows
+    Set-PSReadLineOption -Colors @{
+        Command   = 'Yellow'
+        Parameter = 'Green'
+        String    = 'DarkCyan'
+    }
+} else {
+    Write-Warning "No se pudo cargar el módulo PSReadLine. Asegúrate de que esté instalado correctamente."
+}
+
+# Instalar y configurar Terminal-Icons para mostrar íconos en la terminal
+Install-ModuleIfMissing -moduleName "Terminal-Icons"
+
+if (Get-Module -ListAvailable -Name "Terminal-Icons") {
+    Import-Module Terminal-Icons
+} else {
+    Write-Warning "No se pudo cargar el módulo Terminal-Icons. Asegúrate de que esté instalado correctamente."
+}
 
 # Check for Profile Updates
 function Update-Profile {
@@ -29,14 +81,15 @@ function Update-Profile {
     try {
         $url = "https://raw.githubusercontent.com/danteRub/powershell-profile/main/Microsoft.PowerShell_profile.ps1"
         $oldhash = Get-FileHash $PROFILE
-        Invoke-RestMethod $url -OutFile "$env:temp/Microsoft.PowerShell_profile.ps1"
+        Invoke-RestMethod -Uri $url -OutFile "$env:temp/Microsoft.PowerShell_profile.ps1" -ErrorAction Stop
         $newhash = Get-FileHash "$env:temp/Microsoft.PowerShell_profile.ps1"
+
         if ($newhash.Hash -ne $oldhash.Hash) {
-            Copy-Item -Path "$env:temp/Microsoft.PowerShell_profile.ps1" -Destination $PROFILE -Force
+            Copy-Item -Path "$env:temp/Microsoft.PowerShell_profile.ps1" -Destination $PROFILE -Force -ErrorAction Stop
             Write-Host "Profile has been updated. Please restart your shell to reflect changes" -ForegroundColor Magenta
         }
     } catch {
-        Write-Error "Unable to check for `$profile updates"
+        Write-Error "Failed to check or update the profile. Error: $_"
     } finally {
         Remove-Item "$env:temp/Microsoft.PowerShell_profile.ps1" -ErrorAction SilentlyContinue
     }
@@ -54,14 +107,15 @@ function Update-PowerShell {
         $updateNeeded = $false
         $currentVersion = $PSVersionTable.PSVersion.ToString()
         $gitHubApiUrl = "https://api.github.com/repos/PowerShell/PowerShell/releases/latest"
-        $latestReleaseInfo = Invoke-RestMethod -Uri $gitHubApiUrl
+        $latestReleaseInfo = Invoke-RestMethod -Uri $gitHubApiUrl -ErrorAction Stop
         $latestVersion = $latestReleaseInfo.tag_name.Trim('v')
-        if ($currentVersion -lt $latestVersion) {
+        
+        if ([version]$currentVersion -lt [version]$latestVersion) {
             $updateNeeded = $true
         }
 
         if ($updateNeeded) {
-            Write-Host "Updating PowerShell..." -ForegroundColor Yellow
+            Write-Host "Updating PowerShell to version $latestVersion..." -ForegroundColor Yellow
             winget upgrade "Microsoft.PowerShell" --accept-source-agreements --accept-package-agreements
             Write-Host "PowerShell has been updated. Please restart your shell to reflect changes" -ForegroundColor Magenta
         } else {
@@ -234,14 +288,12 @@ function ep { code $PROFILE }
 # Simplified Process Management
 function k9 { Stop-Process -Name $args[0] }
 
-# Enhanced Listing
-function la {
-    $width = [console]::WindowWidth
-    $null = [console]::BufferWidth = $width
-    eza -al -h --color=always --icons
-}
+# Enhanced Listing with icons
 
-function ls { eza.exe -lab --group-directories-first --git --icons $Path }
+function ls { eza -l --icons }
+function la { eza -la --icons }
+function ll { eza -la --hidden --icons }
+
 
 # Git Shortcuts
 function gs { git status }
@@ -252,7 +304,7 @@ function gc { param($m) git commit -m "$m" }
 
 function gp { git push }
 
-function g { z Github }
+function g { __zoxide_z github }
 
 function gcl { git clone "$args" }
 
@@ -287,6 +339,28 @@ Set-PSReadLineOption -Colors @{
     String = 'DarkCyan'
 }
 
+$PSROptions = @{
+    ContinuationPrompt = '  '
+    Colors             = @{
+    Parameter          = $PSStyle.Foreground.Magenta
+    Selection          = $PSStyle.Background.Black
+    InLinePrediction   = $PSStyle.Foreground.BrightYellow + $PSStyle.Background.BrightBlack
+    }
+}
+Set-PSReadLineOption @PSROptions
+Set-PSReadLineKeyHandler -Chord 'Ctrl+f' -Function ForwardWord
+Set-PSReadLineKeyHandler -Chord 'Enter' -Function ValidateAndAcceptLine
+
+$scriptblock = {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    dotnet complete --position $cursorPosition $commandAst.ToString() |
+        ForEach-Object {
+            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+}
+Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock $scriptblock
+
+
 # Get theme from profile.ps1 or use a default theme
 function Get-Theme {
     if (Test-Path -Path $PROFILE.CurrentUserAllHosts -PathType leaf) {
@@ -318,6 +392,8 @@ if (Get-Command zoxide -ErrorAction SilentlyContinue) {
     }
 }
 
+Set-Alias -Name z -Value __zoxide_z -Option AllScope -Scope Global -Force
+Set-Alias -Name zi -Value __zoxide_zi -Option AllScope -Scope Global -Force
 
 # Help Function
 function Show-Help {
