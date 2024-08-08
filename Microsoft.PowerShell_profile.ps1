@@ -241,14 +241,7 @@ function la {
     eza -al -h --color=always --icons
 }
 
-function ls {
-    [alias('ls')]
-    param(
-        [string]$Path # path for ls
-    )
-
-    eza.exe -lab --group-directories-first --git --icons $Path
-}
+function ls { eza.exe -lab --group-directories-first --git --icons $Path }
 
 # Git Shortcuts
 function gs { git status }
