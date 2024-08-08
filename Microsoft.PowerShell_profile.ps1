@@ -290,7 +290,7 @@ function k9 { Stop-Process -Name $args[0] }
 
 # Enhanced Listing with icons
 
-function ls { eza -l --icons }
+function ls { eza -l -h --color=always --icons }
 function la { eza -la --icons }
 function ll { eza -la --hidden --icons }
 
